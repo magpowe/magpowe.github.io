@@ -1,0 +1,439 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FATM Clicker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .theme-dark { background-color: #1a202c; color: #e2e8f0; }
+        .theme-light { background-color: #f7fafc; color: #2d3748; }
+        .click-area { 
+            width: 128px; 
+            height: 128px; 
+            background-color: #000000; 
+            border-radius: 50%; 
+            cursor: pointer; 
+            transition: transform 0.1s; 
+        }
+        .click-area:active { transform: scale(0.95); }
+        .notification { transition: opacity 0.5s; }
+        .wheel-container { position: relative; width: 200px; height: 200px; margin: 0 auto; }
+        .wheel { 
+            width: 100%; 
+            height: 100%; 
+            border-radius: 50%; 
+            position: relative; 
+            overflow: hidden; 
+            transition: transform 4s ease-out; 
+        }
+        .wheel-sector { 
+            position: absolute; 
+            width: 50%; 
+            height: 50%; 
+            transform-origin: 100% 100%; 
+            clip-path: polygon(0% 0%, 100% 0%, 100% 100%); 
+        }
+        .wheel-arrow { 
+            position: absolute; 
+            top: -10px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            width: 0; 
+            height: 0; 
+            border-left: 10px solid transparent; 
+            border-right: 10px solid transparent; 
+            border-top: 20px solid red; 
+            z-index: 10; 
+        }
+    </style>
+</head>
+<body class="theme-dark min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-md">
+        <div class="flex justify-between mb-4">
+            <h1 class="text-2xl font-bold">FATM Clicker</h1>
+            <button id="theme-toggle" class="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600">
+                Светлая тема
+            </button>
+        </div>
+        <div class="text-center mb-4">
+            <p class="text-xl">FATM: <span id="fatm-count">0</span></p>
+            <p>FATM в час: <span id="fatm-per-hour">0</span></p>
+            <p>Энергия: <span id="energy-count">100</span>/<span id="max-energy">100</span></p>
+        </div>
+        <div class="flex justify-center mb-4">
+            <div id="click-area" class="click-area"></div>
+        </div>
+        <div id="notification" class="text-center mb-4 text-red-400 opacity-0"></div>
+        <div class="space-y-2 mb-4">
+            <div class="flex justify-between items-center p-2 bg-gray-800 rounded">
+                <span>Буст клика (Ур. <span id="click-level">1</span>)</span>
+                <button id="upgrade-click" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
+                    Улучшить (<span id="click-cost">10</span> FATM)
+                </button>
+            </div>
+            <div class="flex justify-between items-center p-2 bg-gray-800 rounded">
+                <span>Автоклик (Ур. <span id="auto-level">0</span>)</span>
+                <button id="upgrade-auto" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
+                    Улучшить (<span id="auto-cost">50</span> FATM)
+                </button>
+            </div>
+            <div class="flex justify-between items-center p-2 bg-gray-800 rounded">
+                <span>Множитель (Ур. <span id="multiplier-level">0</span>)</span>
+                <button id="upgrade-multiplier" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
+                    Улучшить (<span id="multiplier-cost">100</span> FATM)
+                </button>
+            </div>
+            <div class="flex justify-between items-center p-2 bg-gray-800 rounded">
+                <span>Энергия (Ур. <span id="energy-level">0</span>)</span>
+                <button id="upgrade-energy" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">
+                    Улучшить (<span id="energy-cost">75</span> FATM)
+                </button>
+            </div>
+        </div>
+        <div class="text-center">
+            <button id="spin-wheel" class="px-4 py-2 bg-purple-600 rounded hover:bg-purple-500">
+                Крутить колесо (50 FATM)
+            </button>
+            <div id="wheel-container" class="wheel-container hidden mt-4">
+                <div class="wheel-arrow"></div>
+                <div id="wheel" class="wheel">
+                    <div class="wheel-sector bg-red-500" style="transform: rotate(0deg);"></div>
+                    <div class="wheel-sector bg-blue-500" style="transform: rotate(60deg);"></div>
+                    <div class="wheel-sector bg-green-500" style="transform: rotate(120deg);"></div>
+                    <div class="wheel-sector bg-yellow-500" style="transform: rotate(180deg);"></div>
+                    <div class="wheel-sector bg-purple-500" style="transform: rotate(240deg);"></div>
+                    <div class="wheel-sector bg-pink-500" style="transform: rotate(300deg);"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Инициализация состояния с значениями по умолчанию
+        const defaultGameState = {
+            fatm: 0,
+            clickLevel: 1,
+            autoLevel: 0,
+            multiplierLevel: 0,
+            energyLevel: 0,
+            energy: 100,
+            maxEnergy: 100,
+            energyRegen: 0.1,
+            fatmPerClick: 1,
+            fatmPerHour: 0,
+            clickCost: 10,
+            autoCost: 50,
+            multiplierCost: 100,
+            energyCost: 75,
+            multiplier: 1,
+            tempMultiplier: 1,
+            tempMultiplierTimeout: null
+        };
+
+        let gameState = { ...defaultGameState };
+
+        // Загрузка сохранённого прогресса с проверкой
+        function loadGame() {
+            try {
+                const saved = localStorage.getItem('fatmClicker');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    // Проверка и установка значений по умолчанию
+                    gameState = { ...defaultGameState, ...parsed };
+                    // Гарантируем, что числовые значения корректны
+                    gameState.fatm = isFinite(gameState.fatm) ? gameState.fatm : 0;
+                    gameState.energy = isFinite(gameState.energy) ? Math.min(gameState.energy, gameState.maxEnergy) : 100;
+                    gameState.maxEnergy = isFinite(gameState.maxEnergy) && gameState.maxEnergy > 0 ? gameState.maxEnergy : 100;
+                    gameState.energyRegen = isFinite(gameState.energyRegen) && gameState.energyRegen >= 0 ? gameState.energyRegen : 0.1;
+                    gameState.clickLevel = isFinite(gameState.clickLevel) ? gameState.clickLevel : 1;
+                    gameState.autoLevel = isFinite(gameState.autoLevel) ? gameState.autoLevel : 0;
+                    gameState.multiplierLevel = isFinite(gameState.multiplierLevel) ? gameState.multiplierLevel : 0;
+                    gameState.energyLevel = isFinite(gameState.energyLevel) ? gameState.energyLevel : 0;
+                    gameState.fatmPerClick = isFinite(gameState.fatmPerClick) ? gameState.fatmPerClick : 1;
+                    gameState.fatmPerHour = isFinite(gameState.fatmPerHour) ? gameState.fatmPerHour : 0;
+                    gameState.clickCost = isFinite(gameState.clickCost) ? gameState.clickCost : 10;
+                    gameState.autoCost = isFinite(gameState.autoCost) ? gameState.autoCost : 50;
+                    gameState.multiplierCost = isFinite(gameState.multiplierCost) ? gameState.multiplierCost : 100;
+                    gameState.energyCost = isFinite(gameState.energyCost) ? gameState.energyCost : 75;
+                    gameState.multiplier = isFinite(gameState.multiplier) ? gameState.multiplier : 1;
+                    gameState.tempMultiplier = 1;
+                    gameState.tempMultiplierTimeout = null;
+                }
+            } catch (e) {
+                console.error('Error loading game state:', e);
+                localStorage.removeItem('fatmClicker'); // Сброс повреждённых данных
+                gameState = { ...defaultGameState };
+            }
+        }
+
+        // Сохранение прогресса
+        function saveGame() {
+            try {
+                localStorage.setItem('fatmClicker', JSON.stringify({
+                    ...gameState,
+                    tempMultiplier: 1,
+                    tempMultiplierTimeout: null
+                }));
+            } catch (e) {
+                console.error('Error saving game state:', e);
+            }
+        }
+
+        // Элементы DOM
+        const fatmCount = document.getElementById('fatm-count');
+        const fatmPerHour = document.getElementById('fatm-per-hour');
+        const energyCount = document.getElementById('energy-count');
+        const maxEnergy = document.getElementById('max-energy');
+        const clickArea = document.getElementById('click-area');
+        const upgradeClick = document.getElementById('upgrade-click');
+        const upgradeAuto = document.getElementById('upgrade-auto');
+        const upgradeMultiplier = document.getElementById('upgrade-multiplier');
+        const upgradeEnergy = document.getElementById('upgrade-energy');
+        const clickLevelDisplay = document.getElementById('click-level');
+        const autoLevelDisplay = document.getElementById('auto-level');
+        const multiplierLevelDisplay = document.getElementById('multiplier-level');
+        const energyLevelDisplay = document.getElementById('energy-level');
+        const clickCostDisplay = document.getElementById('click-cost');
+        const autoCostDisplay = document.getElementById('auto-cost');
+        const multiplierCostDisplay = document.getElementById('multiplier-cost');
+        const energyCostDisplay = document.getElementById('energy-cost');
+        const themeToggle = document.getElementById('theme-toggle');
+        const notification = document.getElementById('notification');
+        const spinWheelButton = document.getElementById('spin-wheel');
+        const wheelContainer = document.getElementById('wheel-container');
+        const wheel = document.getElementById('wheel');
+
+        // Проверка кликовой области
+        if (!clickArea) {
+            console.error('Click area not found!');
+        } else {
+            console.log('Click area initialized successfully.');
+        }
+
+        // Обработчик кликов
+        clickArea.addEventListener('click', () => {
+            if (gameState.energy >= 1) {
+                const earned = gameState.fatmPerClick * gameState.multiplier * gameState.tempMultiplier;
+                gameState.fatm += isFinite(earned) ? earned : 0;
+                gameState.energy -= 1;
+                showNotification('+1 FATM', 'text-green-400');
+                updateDisplay();
+                saveGame();
+                console.log('Click registered, FATM:', gameState.fatm);
+            } else {
+                showNotification('Недостаточно энергии!', 'text-red-400');
+            }
+        });
+
+        // Улучшение клика
+        upgradeClick.addEventListener('click', () => {
+            if (gameState.fatm >= gameState.clickCost) {
+                gameState.fatm -= gameState.clickCost;
+                gameState.clickLevel++;
+                gameState.fatmPerClick = gameState.clickLevel;
+                gameState.clickCost = Math.round(gameState.clickCost * 1.5);
+                showNotification('Буст клика улучшен!', 'text-green-400');
+                updateDisplay();
+                saveGame();
+            } else {
+                showNotification('Недостаточно FATM!', 'text-red-400');
+            }
+        });
+
+        // Улучшение автоклика
+        upgradeAuto.addEventListener('click', () => {
+            if (gameState.fatm >= gameState.autoCost) {
+                gameState.fatm -= gameState.autoCost;
+                gameState.autoLevel++;
+                gameState.fatmPerHour += 10;
+                gameState.autoCost = Math.round(gameState.autoCost * 2);
+                showNotification('Автоклик улучшен!', 'text-green-400');
+                updateDisplay();
+                saveGame();
+            } else {
+                showNotification('Недостаточно FATM!', 'text-red-400');
+            }
+        });
+
+        // Улучшение множителя
+        upgradeMultiplier.addEventListener('click', () => {
+            if (gameState.fatm >= gameState.multiplierCost) {
+                gameState.fatm -= gameState.multiplierCost;
+                gameState.multiplierLevel++;
+                gameState.multiplier = 1 + gameState.multiplierLevel * 0.5;
+                gameState.multiplierCost = Math.round(gameState.multiplierCost * 2.5);
+                showNotification('Множитель улучшен!', 'text-green-400');
+                updateDisplay();
+                saveGame();
+            } else {
+                showNotification('Недостаточно FATM!', 'text-red-400');
+            }
+        });
+
+        // Улучшение энергии
+        upgradeEnergy.addEventListener('click', () => {
+            if (gameState.fatm >= gameState.energyCost) {
+                gameState.fatm -= gameState.energyCost;
+                gameState.energyLevel++;
+                gameState.maxEnergy += 50;
+                gameState.energyRegen += 0.05;
+                gameState.energyCost = Math.round(gameState.energyCost * 2);
+                gameState.energy = Math.min(gameState.energy, gameState.maxEnergy);
+                showNotification('Энергия улучшена!', 'text-green-400');
+                updateDisplay();
+                saveGame();
+            } else {
+                showNotification('Недостаточно FATM!', 'text-red-400');
+            }
+        });
+
+        // Переключение темы
+        themeToggle.addEventListener('click', () => {
+            document.body.classList.toggle('theme-dark');
+            document.body.classList.toggle('theme-light');
+            themeToggle.textContent = document.body.classList.contains('theme-dark') ? 'Светлая тема' : 'Тёмная тема';
+        });
+
+        // Колесо фортуны
+        const rewards = [
+            { name: '10 FATM', action: () => gameState.fatm += 10, chance: 0.3 },
+            { name: '50 FATM', action: () => gameState.fatm += 50, chance: 0.25 },
+            { name: '100 FATM', action: () => gameState.fatm += 100, chance: 0.15 },
+            { name: '+50 энергии', action: () => gameState.energy = Math.min(gameState.energy + 50, gameState.maxEnergy), chance: 0.15 },
+            { name: 'x2 множитель (30с)', action: () => {
+                gameState.tempMultiplier = 2;
+                clearTimeout(gameState.tempMultiplierTimeout);
+                gameState.tempMultiplierTimeout = setTimeout(() => {
+                    gameState.tempMultiplier = 1;
+                    showNotification('Временный множитель закончился', 'text-yellow-400');
+                    updateDisplay();
+                }, 30000);
+            }, chance: 0.1 },
+            { name: 'Джекпот 500 FATM', action: () => gameState.fatm += 500, chance: 0.05 }
+        ];
+
+        spinWheelButton.addEventListener('click', () => {
+            if (gameState.fatm >= 50) {
+                gameState.fatm -= 50;
+                wheelContainer.classList.remove('hidden');
+                spinWheelButton.disabled = true;
+                const spinDuration = 4000;
+                const totalRotation = 360 * 5 + Math.random() * 360;
+                wheel.style.transform = `rotate(${totalRotation}deg)`;
+
+                let random = Math.random();
+                let selectedReward;
+                let cumulativeChance = 0;
+                for (const reward of rewards) {
+                    cumulativeChance += reward.chance;
+                    if (random <= cumulativeChance) {
+                        selectedReward = reward;
+                        break;
+                    }
+                }
+
+                setTimeout(() => {
+                    selectedReward.action();
+                    showNotification(`Вы выиграли: ${selectedReward.name}!`, 'text-green-400');
+                    wheelContainer.classList.add('hidden');
+                    wheel.style.transform = 'rotate(0deg)';
+                    spinWheelButton.disabled = false;
+                    updateDisplay();
+                    saveGame();
+                }, spinDuration);
+            } else {
+                showNotification('Недостаточно FATM для вращения!', 'text-red-400');
+            }
+        });
+
+        // Показ уведомлений
+        function showNotification(message, colorClass) {
+            notification.textContent = message;
+            notification.className = `text-center mb-4 ${colorClass} opacity-100`;
+            setTimeout(() => {
+                notification.className = 'text-center mb-4 text-red-400 opacity-0';
+            }, 2000);
+        }
+
+        // Обновление энергии
+        setInterval(() => {
+            if (gameState.energy < gameState.maxEnergy) {
+                const regen = isFinite(gameState.energyRegen) ? gameState.energyRegen : 0.1;
+                gameState.energy = Math.min(gameState.energy + regen, gameState.maxEnergy);
+                updateDisplay();
+                saveGame();
+            }
+        }, 1000);
+
+        // Обновление автоклика
+        setInterval(() => {
+            const earned = (gameState.fatmPerHour / 3600) * gameState.multiplier * gameState.tempMultiplier;
+            gameState.fatm += isFinite(earned) ? earned : 0;
+            updateDisplay();
+            saveGame();
+        }, 1000);
+
+        // Обновление отображения с защитой от NaN
+        function updateDisplay() {
+            fatmCount.textContent = isFinite(gameState.fatm) ? Math.floor(gameState.fatm) : 0;
+            fatmPerHour.textContent = isFinite(gameState.fatmPerHour * gameState.multiplier * gameState.tempMultiplier) 
+                ? Math.floor(gameState.fatmPerHour * gameState.multiplier * gameState.tempMultiplier) : 0;
+            energyCount.textContent = isFinite(gameState.energy) ? Math.floor(gameState.energy) : 100;
+            maxEnergy.textContent = isFinite(gameState.maxEnergy) ? gameState.maxEnergy : 100;
+            clickLevelDisplay.textContent = isFinite(gameState.clickLevel) ? gameState.clickLevel : 1;
+            autoLevelDisplay.textContent = isFinite(gameState.autoLevel) ? gameState.autoLevel : 0;
+            multiplierLevelDisplay.textContent = isFinite(gameState.multiplierLevel) ? gameState.multiplierLevel : 0;
+            energyLevelDisplay.textContent = isFinite(gameState.energyLevel) ? gameState.energyLevel : 0;
+            clickCostDisplay.textContent = isFinite(gameState.clickCost) ? gameState.clickCost : 10;
+            autoCostDisplay.textContent = isFinite(gameState.autoCost) ? gameState.autoCost : 50;
+            multiplierCostDisplay.textContent = isFinite(gameState.multiplierCost) ? gameState.multiplierCost : 100;
+            energyCostDisplay.textContent = isFinite(gameState.energyCost) ? gameState.energyCost : 75;
+        }
+
+        // Инициализация
+        loadGame();
+        updateDisplay();
+        console.log('Game initialized with state:', gameState);
+    </script>
+</body>
+</html>
